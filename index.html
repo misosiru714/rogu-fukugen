@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCFOLIA Log Restorer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .log-preview p { margin-bottom: 0px; line-height: 1.4; font-size: 0.85rem; white-space: nowrap; }
+        .log-preview span { margin: 0; }
+    </style>
+</head>
+<body class="bg-[#f3f4f6] text-slate-900 min-h-screen">
+
+    <div class="max-w-3xl mx-auto px-4 py-10">
+        <!-- Header -->
+        <header class="mb-8 text-center">
+            <h1 class="text-2xl font-bold text-slate-800 mb-2">CCFOLIA Log Restorer</h1>
+            <p class="text-slate-600">整形済みログをココフォリア標準形式へ「完全復元」します</p>
+        </header>
+
+        <!-- Drop Zone -->
+        <div id="dropZone" class="bg-white border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center transition-all hover:border-blue-400 hover:bg-blue-50 cursor-pointer mb-6">
+            <div class="flex flex-col items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-slate-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p class="text-slate-700 font-medium">整形済みHTMLをドロップ</p>
+                <p class="text-slate-400 text-sm mt-2">対応形式: message-item / tab-name div / dl・dt・dd / ろぐしあたー書き出し / 復元済みpタグ</p>
+            </div>
+            <input type="file" id="fileInput" class="hidden" accept=".html">
+        </div>
+
+        <!-- Result Controls -->
+        <div id="controls" class="hidden mb-6 flex gap-3 items-center">
+            <button id="downloadBtn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+                復元したHTMLを保存
+            </button>
+            <button id="resetBtn" class="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 transition-all">
+                リセット
+            </button>
+        </div>
+
+        <!-- Preview Area -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                <span class="font-bold text-slate-700">復元プレビュー (CCFOLIA Standard)</span>
+                <div class="flex items-center gap-2">
+                    <span id="formatBadge" class="hidden text-xs font-mono text-blue-700 bg-blue-100 px-2 py-1 rounded"></span>
+                    <span id="logCount" class="text-xs font-mono text-slate-500 bg-slate-200 px-2 py-1 rounded">0 lines</span>
+                </div>
+            </div>
+            <div id="previewArea" class="log-preview p-6 h-[450px] overflow-y-auto bg-[#ffffff] font-mono">
+                <p class="text-slate-400 italic text-center mt-20">ファイルを読み込んでください</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const previewArea = document.getElementById('previewArea');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const controls = document.getElementById('controls');
+        const logCount = document.getElementById('logCount');
+        const formatBadge = document.getElementById('formatBadge');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFile);
+
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-400', 'bg-blue-50'); });
+        dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('border-blue-400', 'bg-blue-50'); });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-400', 'bg-blue-50');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFile({ target: { files } });
+        });
+
+        function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => processHTML(event.target.result);
+            reader.readAsText(file);
+        }
+
+        function showFormatBadge(label) {
+            formatBadge.textContent = label;
+            formatBadge.classList.remove('hidden');
+        }
+
+        function processHTML(htmlContent) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlContent, 'text/html');
+            formatBadge.classList.add('hidden');
+
+            // === フォーマットA: .message-item 構造 ===
+            const items = doc.querySelectorAll('.message-item');
+            if (items.length > 0) {
+                restoreFromMessageItems(items);
+                showFormatBadge('形式: message-item');
+                return;
+            }
+
+            // === フォーマットE: ろぐしあたー書き出しHTML（log-data-storage に埋め込みJSON） ===
+            const logDataEl = doc.getElementById('log-data-storage');
+            if (logDataEl) {
+                const ok = restoreFromLogTheater(logDataEl.textContent);
+                if (ok) {
+                    showFormatBadge('形式: ろぐしあたー書き出し');
+                    return;
+                }
+            }
+
+            // === フォーマットB: tab-name属性を持つdiv構造 ===
+            const tabDivs = doc.querySelectorAll('div[tab-name]');
+            if (tabDivs.length > 0) {
+                restoreFromTabNameDivs(tabDivs);
+                showFormatBadge('形式: tab-name div');
+                return;
+            }
+
+            // === フォーマットC: したらば風 dl/dt/dd 構造（headerにタブ切替チェックボックスがある形式） ===
+            const dlItems = doc.querySelectorAll('dl > dt + dd');
+            if (dlItems.length > 0) {
+                const hadAmbiguousTabs = restoreFromDlFormat(doc);
+                showFormatBadge(hadAmbiguousTabs ? '形式: dl/dt/dd（一部タブ名は推定）' : '形式: dl/dt/dd');
+                return;
+            }
+
+            // === フォーマットD: 既存の p タグ（前回の復元結果など） ===
+            const pTags = doc.querySelectorAll('p');
+            if (pTags.length > 0) {
+                restoreFromPTags(pTags);
+                showFormatBadge('形式: p タグ再読込');
+                return;
+            }
+
+            previewArea.innerHTML = '<p class="text-red-500 text-center mt-10">解析可能なログ構造が見つかりませんでした。</p>';
+            controls.classList.add('hidden');
+        }
+
+        // style属性から直接colorを抜き出す（style.colorはブラウザにrgb()化されて
+        // 元のhex表記が失われるため、生の属性文字列から取得する）
+        function getRawColor(el, fallback) {
+            const styleAttr = el.getAttribute('style') || '';
+            const m = styleAttr.match(/color:\s*([^;]+)/);
+            return m ? m[1].trim() : fallback;
+        }
+
+        function appendRestoredLine(color, innerHTML) {
+            const p = document.createElement('p');
+            p.style.color = color;
+            p.dataset.rawColor = color; // ダウンロード時はこちらを使い、hex表記を保持する
+            p.innerHTML = innerHTML;
+            previewArea.appendChild(p);
+        }
+
+        function restoreFromMessageItems(items) {
+            previewArea.innerHTML = '';
+            let count = 0;
+
+            items.forEach(item => {
+                const tabText = item.querySelector('.tab-text')?.textContent?.trim() || 'main';
+                const nameElement = item.querySelector('.message-user-text');
+                const contentElement = item.querySelector('.message-content-text');
+
+                if (nameElement && contentElement) {
+                    const name = nameElement.textContent.trim();
+                    const color = getRawColor(nameElement, '#fffbea');
+                    const content = contentElement.innerHTML.trim();
+
+                    appendRestoredLine(color, `<span> [${tabText}]</span><span>${name}</span> : <span>${content}</span>`);
+                    count++;
+                }
+            });
+
+            logCount.textContent = `${count} lines`;
+            controls.classList.remove('hidden');
+        }
+
+        // dice表示の <br><span class="dice ...">結果</span> を、
+        // 元のCCFOLIA標準ログにあった素のテキストへ戻す
+        // （brと結果spanタグをまるごと取り除き、中のテキストだけを残す。
+        //   前後の空白はいじらない＝復元前と完全に同じ見た目になる）
+        function unwrapDiceHtml(innerHTML) {
+            return innerHTML.replace(/<br\s*\/?>\s*<span class="dice[^"]*">([\s\S]*?)<\/span>/g, '$1');
+        }
+
+        function restoreFromTabNameDivs(tabDivs) {
+            previewArea.innerHTML = '';
+            let count = 0;
+
+            tabDivs.forEach(div => {
+                const tabName = (div.getAttribute('tab-name') || 'main').trim();
+                const nameFieldName = div.querySelector('.name-field .name');
+                const contentElement = div.querySelector('.text');
+
+                if (nameFieldName && contentElement) {
+                    // 「エイト :」のように末尾に「 :」がついてくるので取り除く
+                    // （名前先頭の半角スペースは意図的な場合があるためtrimしない）
+                    const name = nameFieldName.textContent.replace(/\s*[:：]\s*$/, '');
+                    const color = getRawColor(div, '#888888');
+                    const content = unwrapDiceHtml(contentElement.innerHTML);
+
+                    // mainタブも含め、タブ名は必ず表示する（実際のCCFOLIA標準ログの仕様）
+                    appendRestoredLine(color, `<span> [${tabName}]</span><span>${name}</span> : <span>${content}</span>`);
+                    count++;
+                }
+            });
+
+            logCount.textContent = `${count} lines`;
+            controls.classList.remove('hidden');
+        }
+
+        // rgb(136, 136, 136) → #888888 （ココフォリア標準ログのhex表記に戻す）
+        function rgbToHex(c) {
+            const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(c || '');
+            if (!m) return c;
+            return '#' + [m[1], m[2], m[3]].map(n => Number(n).toString(16).padStart(2, '0')).join('');
+        }
+
+        // ろぐしあたーの書き出しHTML: 埋め込みJSONの rawMsg（編集前の元本文）から復元する
+        function restoreFromLogTheater(jsonText) {
+            let data;
+            try { data = JSON.parse(jsonText); } catch (e) { return false; }
+            if (!Array.isArray(data) || data.length === 0) return false;
+
+            previewArea.innerHTML = '';
+            let count = 0;
+            data.forEach(d => {
+                // loc は "[観戦雑談]" のように括弧つきで入っているので外す
+                const tabName = String(d.loc || '[main]').replace(/^\[|\]$/g, '');
+                const name = d.char || '';
+                const content = d.rawMsg != null ? d.rawMsg : (d.msg || '');
+                appendRestoredLine(rgbToHex(d.color) || '#888888', `<span> [${tabName}]</span><span>${name}</span> : <span>${content}</span>`);
+                count++;
+            });
+
+            logCount.textContent = `${count} lines`;
+            controls.classList.remove('hidden');
+            return true;
+        }
+
+        // したらば風 dl/dt/dd 形式
+        // 戻り値: タブ名を推定で補った（=元のタブ名が失われている）発言があったか
+        function restoreFromDlFormat(doc) {
+            previewArea.innerHTML = '';
+            let count = 0;
+            let ambiguous = false;
+
+            // headerのチェックボックスラベルから「タブID → 表示名」の対応表を作る
+            const tabLabelMap = {};
+            doc.querySelectorAll('header label[for]').forEach(label => {
+                const clone = label.cloneNode(true);
+                clone.querySelectorAll('input').forEach(i => i.remove());
+                tabLabelMap[label.getAttribute('for')] = clone.textContent.trim();
+            });
+
+            doc.querySelectorAll('dl').forEach(dl => {
+                const dt = dl.querySelector('dt');
+                const dd = dl.querySelector('dd');
+                if (!dt || !dd) return;
+
+                const cls = dl.getAttribute('class') || '';
+                let tabName;
+                const tabMatch = cls.match(/tab_(\d+)/);
+                if (/\bmain\b/.test(cls)) {
+                    tabName = 'main';
+                } else if (tabMatch) {
+                    tabName = tabLabelMap['tab_' + tabMatch[1]] || `tab_${tabMatch[1]}`;
+                } else if (/\bzatsudan\b/.test(cls)) {
+                    // この形式では雑談系タブ（観戦雑談・other等）が1つに統合されていて
+                    // 元のタブ名は復元できないため、ラベル名で代用する
+                    tabName = tabLabelMap['zatsudan'] || '雑談';
+                    ambiguous = true;
+                } else {
+                    tabName = cls.trim() || 'main';
+                }
+
+                // 名前先頭の半角スペースは意図的な場合があるためtrimしない
+                const name = dt.textContent;
+                const color = getRawColor(dl, '#888888');
+                const content = dd.innerHTML.trim();
+
+                appendRestoredLine(color, `<span> [${tabName}]</span><span>${name}</span> : <span>${content}</span>`);
+                count++;
+            });
+
+            logCount.textContent = `${count} lines`;
+            controls.classList.remove('hidden');
+            return ambiguous;
+        }
+
+        function restoreFromPTags(pTags) {
+            previewArea.innerHTML = '';
+            let count = 0;
+            pTags.forEach(p => {
+                const color = getRawColor(p, p.style.color || '#888888');
+                appendRestoredLine(color, p.innerHTML);
+                count++;
+            });
+            logCount.textContent = `${count} lines`;
+            controls.classList.remove('hidden');
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            const pElements = previewArea.querySelectorAll('p');
+            let logBody = "";
+            pElements.forEach(p => {
+                const color = p.dataset.rawColor || p.style.color;
+                logBody += `<p style="color:${color};">${p.innerHTML}</p>\n`;
+            });
+
+            const fullHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ccfolia - logs</title>
+</head>
+<body>
+${logBody}
+</body>
+</html>`;
+
+            const blob = new Blob([fullHtml], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ccfolia_restored_${new Date().getTime()}.html`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        resetBtn.addEventListener('click', () => {
+            previewArea.innerHTML = '<p class="text-slate-400 italic text-center mt-20">ファイルを読み込んでください</p>';
+            controls.classList.add('hidden');
+            formatBadge.classList.add('hidden');
+            logCount.textContent = '0 lines';
+            fileInput.value = '';
+        });
+    </script>
+</body>
+</html>
