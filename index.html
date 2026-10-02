@@ -86,9 +86,19 @@
         function handleFile(e) {
             const file = e.target.files[0];
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => processHTML(event.target.result);
-            reader.readAsText(file);
+            // 先頭バイトを見てUTF-16(BOMあり)かどうか判定してから本読み込みする
+            // （Word保存のHTMLはUTF-16で保存されることが多く、UTF-8決め打ちだと文字化けするため）
+            const headReader = new FileReader();
+            headReader.onload = (ev) => {
+                const bytes = new Uint8Array(ev.target.result);
+                let encoding = 'utf-8';
+                if (bytes[0] === 0xFF && bytes[1] === 0xFE) encoding = 'utf-16le';
+                else if (bytes[0] === 0xFE && bytes[1] === 0xFF) encoding = 'utf-16be';
+                const reader = new FileReader();
+                reader.onload = (event) => processHTML(event.target.result);
+                reader.readAsText(file, encoding);
+            };
+            headReader.readAsArrayBuffer(file.slice(0, 4));
         }
 
         function showFormatBadge(label) {
@@ -100,6 +110,18 @@
             const parser = new DOMParser();
             const doc = parser.parseFromString(htmlContent, 'text/html');
             formatBadge.classList.add('hidden');
+
+            // === フォーマットF: Word保存HTML（CCFOLIAログをコピペしてWordで保存した形式） ===
+            const isWordHtml = htmlContent.includes('urn:schemas-microsoft-com:office:office')
+                || /Generator[^>]*Microsoft Word/i.test(htmlContent)
+                || doc.querySelector('.WordSection1, [class*="WordSection"]');
+            if (isWordHtml) {
+                const ok = restoreFromWordHtml(doc);
+                if (ok) {
+                    showFormatBadge('形式: Word保存HTML（色名は近似）');
+                    return;
+                }
+            }
 
             // === フォーマットA: .message-item 構造 ===
             const items = doc.querySelectorAll('.message-item');
@@ -218,6 +240,49 @@
 
             logCount.textContent = `${count} lines`;
             controls.classList.remove('hidden');
+        }
+
+        // Word保存HTML: <p>内のspan構造が崩れてしまっているので、
+        // pごとにテキストへフラット化してから [tab] 名前 : 本文 を正規表現で切り出す
+        function restoreFromWordHtml(doc) {
+            const ps = doc.querySelectorAll('.WordSection1 p, p');
+            if (ps.length === 0) return false;
+
+            const lineRe = /^\[([^\]]*)\]\s*(.+?)\s*[:：]\s*([\s\S]*)$/;
+            const results = [];
+
+            ps.forEach(p => {
+                let s = p.innerHTML;
+                // Wordの空段落マーカーを除去
+                s = s.replace(/<o:p\s*\/?>[\s\S]*?<\/o:p>|<o:p\s*\/?>/g, '');
+                // span/font等のタグは中身だけ残して剥がす
+                s = s.replace(/<\/?(span|font)[^>]*>/gi, '');
+                // <br>直後の改行・空白はレイアウト用なので除去（<br>自体は実際の改行として残す）
+                s = s.replace(/<br\s*\/?>\s+/gi, '<br>');
+                // それ以外の裸の改行はWordの行折り返しなので半角スペースに変換
+                s = s.replace(/[\r\n]+/g, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+
+                const m = lineRe.exec(s);
+                if (!m) return;
+                const colorMatch = /color:\s*([^;'"]+)/.exec(p.outerHTML);
+                results.push({
+                    tabName: m[1].trim(),
+                    name: m[2],
+                    content: m[3],
+                    color: colorMatch ? colorMatch[1].trim() : '#888888'
+                });
+            });
+
+            // [tab] 名前 : 本文 の形になっている行が見つからなければこの形式ではない
+            if (results.length === 0) return false;
+
+            previewArea.innerHTML = '';
+            results.forEach(r => {
+                appendRestoredLine(r.color, `<span> [${r.tabName}]</span><span>${r.name}</span> : <span>${r.content}</span>`);
+            });
+            logCount.textContent = `${results.length} lines`;
+            controls.classList.remove('hidden');
+            return true;
         }
 
         // rgb(136, 136, 136) → #888888 （ココフォリア標準ログのhex表記に戻す）
